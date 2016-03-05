@@ -62,8 +62,8 @@ class Robot:
         :param position: () -- current position of the robot
         """
         self.position = position
-        self.vMove = 0.0
-        self.vTurn = 0.0
+        self.vMove = 0.2
+        self.vTurn = 1.0
         self.tickMove = 0.01
         self.tickTurn = 0.002
         self.noiseTurn = 0.0
