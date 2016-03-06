@@ -143,7 +143,7 @@ if __name__ == "__main__":
     # Initial read from the simulator # TODO: Test reading of the simulator commands
     u.init_read()
 
-    path = find_final_path.create_final_path()
+    path = find_final_path.correct_final_path()
     commands = u.robot.command_generator(path)
 
     while True:

@@ -9,23 +9,23 @@ from math import pi, sin, cos, floor, ceil
 
 objective_r1 = (  # caly cel
     (  # pierwszy prostokat
-        (4.1, 4.9),  # zakres x
-        (2.1, 2.9)  # zakres y
+        (4.15, 4.85),  # zakres x
+        (2.15, 2.85)  # zakres y
     ),  # ewentualny drugi prostokat
 )
 objective_r2 = (
-    ((4.1, 4.9), (4.1, 4.9)),
+    ((4.15, 4.85), (4.15, 4.85)),
 )
 
 objective_g1 = (
-    ((2.1, 2.9), (5.1, 5.9)),
+    ((2.15, 2.85), (5.15, 5.85)),
 )
 objective_g2 = (
-    ((6.1, 6.9), (6.1, 6.9)),
+    ((6.15, 6.85), (6.15, 6.85)),
 )
 
 objective_b1 = (
-    ((6.1, 6.9), (3.1, 3.9)),
+    ((6.15, 6.85), (3.15, 3.85)),
 )
 
 objectives_r = (objective_r1, objective_r2)  # grupa celow czerwonych
@@ -118,24 +118,30 @@ class Path:
                                                    "}" for move in self.moves]) + "]"
 
 
-def simulate_route(position_in, moves_in):
-    position_out = position_in.copy()
-    position_out["phi"] += moves_in["turn"] * tick_turn
-    if position_out["phi"] > 2 * pi:
-        position_out["phi"] -= 2 * pi
-    elif position_out["phi"] < 0:
-        position_out["phi"] += 2 * pi
-    if moves_in["move"] >= 0:
-        for i in range(moves_in["move"]):
-            position_out["x"] += tick_move * cos(position_out["phi"])
-            position_out["y"] += tick_move * sin(-position_out["phi"])
-            position_out["phi"] -= noise_drift
+def find_route_correction(distance):
+    position_regular = {"x": 0.0, "y": 0.0, "phi": 0.0}
+    position_corrected = {"x": 0.0, "y": 0.0, "phi": 0.0}
+    ticks = int(distance * ticks_distance)
+
+    if distance >= 0:
+        position_regular["x"] += distance * cos(position_regular["phi"])
+        position_regular["y"] += distance * sin(-position_regular["phi"])
+        for i in range(ticks):
+            position_corrected["x"] += tick_move * cos(position_corrected["phi"])
+            position_corrected["y"] += tick_move * sin(-position_corrected["phi"])
+            position_corrected["phi"] += noise_drift
     else:
-        for i in range(-moves_in["move"]):
-            position_out["x"] -= tick_move * cos(position_out["phi"])
-            position_out["y"] -= tick_move * sin(-position_out["phi"])
-            position_out["phi"] += noise_drift
-    return position_out
+        position_regular["x"] += distance * cos(position_regular["phi"])
+        position_regular["y"] += distance * sin(-position_regular["phi"])
+        for i in range(-ticks):
+            position_corrected["x"] -= tick_move * cos(position_corrected["phi"])
+            position_corrected["y"] -= tick_move * sin(-position_corrected["phi"])
+            position_corrected["phi"] -= noise_drift
+
+    correction = {"x": position_regular["x"] - position_corrected["x"],
+                  "y": position_regular["y"] - position_corrected["y"],
+                  "phi": position_regular["phi"] - position_corrected["phi"]}
+    return correction
 
 
 def find_path(path_in, movement_in, best_path, node_in):
@@ -150,11 +156,13 @@ def find_path(path_in, movement_in, best_path, node_in):
         angle_offset = path_moves["turn"] - (movement_in["angle"] * div_nr / 2)
         angles_list = [angle_offset + (movement_in["angle"] * div) for div in range(div_nr)]
         if path_moves["move"] >= 0:
-            distance_offset = path_moves["move"] - path_in.limits["distance"]
+            distance_offset = path_moves["move"] - 2 * path_in.limits["distance"]
         else:
-            distance_offset = path_moves["move"] + path_in.limits["distance"]
+            distance_offset = path_moves["move"] + 2 * path_in.limits["distance"]
 
     move_distance = movement_in["distance"]
+    correction = find_route_correction(move_distance)
+    correction_offset = find_route_correction(distance_offset)
     branches = []
     for angle in angles_list:
         if angle > pi:
@@ -164,10 +172,16 @@ def find_path(path_in, movement_in, best_path, node_in):
         distance_offset_ticks = int(distance_offset * ticks_distance)
         angle_ticks = int(angle * ticks_angle)
         branch = Branch(node_in.position, node_in.cost, node_in.moves)
+        branch.positions = node_in.positions.copy()
         branch.objective_group_index = node_in.objective_group_index + 1
         branch.cost += abs(angle_ticks) / v_turn
         branch.cost += abs(distance_offset_ticks) / v_move
-        branch.position = simulate_route(branch.position, {"move": distance_offset_ticks, "turn": angle_ticks})
+
+        branch.position["phi"] += angle
+        branch.position["x"] += distance_offset * cos(branch.position["phi"]) + correction_offset["x"]
+        branch.position["y"] += distance_offset * sin(-branch.position["phi"]) + correction_offset["y"]
+        branch.position["phi"] += correction_offset["phi"]
+
         branch.movement["turn"] = angle
         branch.movement["move"] = distance_offset
         branches.append(branch)
@@ -179,11 +193,17 @@ def find_path(path_in, movement_in, best_path, node_in):
         distance_offset_ticks = int(distance_offset * ticks_distance)
         angle_ticks = int(angle * ticks_angle)
         branch = Branch(node_in.position, node_in.cost, node_in.moves)
+        branch.positions = node_in.positions.copy()
         branch.reverse = True
         branch.objective_group_index = node_in.objective_group_index + 1
         branch.cost += abs(angle_ticks) / v_turn
         branch.cost += abs(distance_offset_ticks) / v_move
-        branch.position = simulate_route(branch.position, {"move": distance_offset_ticks, "turn": angle_ticks})
+
+        branch.position["phi"] += angle
+        branch.position["x"] += distance_offset * cos(branch.position["phi"]) + correction_offset["x"]
+        branch.position["y"] += distance_offset * sin(-branch.position["phi"]) + correction_offset["y"]
+        branch.position["phi"] += correction_offset["phi"]
+
         branch.movement["turn"] = angle
         branch.movement["move"] = distance_offset
         branches.append(branch)
@@ -195,12 +215,15 @@ def find_path(path_in, movement_in, best_path, node_in):
                 continue
 
             if branch.reverse:
-                simulated_moves = {"move": -int(move_distance * ticks_distance), "turn": 0}
                 branch.movement["move"] -= move_distance
+                branch.position["x"] -= move_distance * cos(branch.position["phi"]) + correction["x"]
+                branch.position["y"] -= move_distance * sin(-branch.position["phi"]) + correction["y"]
+                branch.position["phi"] -= correction["phi"]
             else:
-                simulated_moves = {"move": int(move_distance * ticks_distance), "turn": 0}
                 branch.movement["move"] += move_distance
-            branch.position = simulate_route(branch.position, simulated_moves)
+                branch.position["x"] += move_distance * cos(branch.position["phi"]) + correction["x"]
+                branch.position["y"] += move_distance * sin(-branch.position["phi"]) + correction["y"]
+                branch.position["phi"] += correction["phi"]
 
             try:
                 for obstacle in obstacles:
@@ -247,9 +270,10 @@ def find_path(path_in, movement_in, best_path, node_in):
 
 def path_to_ticks(path, limits):
     path_out = []
-    for move in path.moves:
+    for move_nr, move in enumerate(path.moves):
         path_out.append({"move": ceil(move["move"] / limits["distance"]),
                          "turn": ceil(move["turn"] / limits["angle"]),
+                         "position": path.positions[move_nr],
                          "beep": move["beep"]})
     return path_out
 
@@ -271,4 +295,29 @@ def create_final_path():
 
     return best_path_ticks
 
-# final = create_final_path()
+
+def correct_final_path():
+    path = create_final_path()
+    # print(path)
+    position = path[0]["position"].copy()
+    counter_ticks = 0
+    while True:
+        position["x"] += tick_move * cos(position["phi"])
+        position["y"] += tick_move * sin(-position["phi"])
+        position["phi"] += noise_drift
+        try:
+            for objective in objectives[0]:
+                for rectangle in objective:
+                    if rectangle[0][0] < position["x"] < rectangle[0][1] \
+                            and rectangle[1][0] < position["y"] < rectangle[1][1]:
+                        counter_ticks += 1
+                        raise FoundIt
+            break
+        except FoundIt:
+            pass
+    path[0]["move"] += counter_ticks
+    path[1]["move"] -= counter_ticks
+    return path
+
+# final = correct_final_path()
+# print(final)
