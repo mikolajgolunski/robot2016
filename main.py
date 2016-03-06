@@ -1,4 +1,8 @@
-import fileinput
+#!/bin/python3
+
+import sys
+
+import find_final_path
 
 
 class Universe:
@@ -19,6 +23,36 @@ class Universe:
         self.robot = robot
         self.board = board
         self.timeLimit = None
+
+    def init_read(self):
+        """Read initial commands given by the simulator."""
+        for i in range(11):
+            line = sys.stdin.readline()
+            key, value = line.strip().split(":")
+            if key == "x":
+                self.robot.position["x"] = float(value)
+            elif key == "y":
+                self.robot.position["y"] = float(value)
+            elif key == "angle":
+                self.robot.position["phi"] = float(value)
+            elif key == "steering_noise":
+                self.robot.noiseTurn = float(value)
+            elif key == "distance_noise":
+                self.robot.noiseMove = float(value)
+            elif key == "forward_steering_drift":
+                self.robot.noiseDrift = float(value)
+            elif key == "speed":
+                self.robot.vMove = float(value)
+            elif key == "turning_speed":
+                self.robot.vTurn = float(value)
+            elif key == "M":
+                self.board.dimensions["x"] = int(value)
+            elif key == "N":
+                self.board.dimensions["y"] = int(value)
+            elif key == "execution_cpu_time_limit":
+                self.timeLimit = float(value)
+            else:
+                raise NotImplementedError("Unknown initialization key.")
 
 
 class Board:
@@ -72,79 +106,65 @@ class Robot:
         self.color = (None, None, None)
         self.time = 0.0
 
-    def read(self, command):
-        """Read commands given by the simulator.
+    def read(self):
+        """Read commands given by the simulator."""
+        while True:
+            key = sys.stdin.readline().strip()
+            if key == "act":
+                break
+            elif key == "color":
+                value = sys.stdin.readline().strip()
+                self.color = tuple(map(int, value.split()))
+            elif key == "time":
+                value = sys.stdin.readline().strip()
+                self.time = float(value)
+            else:
+                raise NotImplementedError("Unknown key")
 
-        :param command: (string) command to act accordingly
+    @staticmethod
+    def command_generator(path):
+        """Generate commands from path.
+
+        :param path:
+        :return:
         """
-        for line in fileinput.input():
-            line = line.strip()
-            if command == "color":
-                self.color = map(int, line.split())
-            elif command == "time":
-                self.time = float(line)
-            else:
-                raise RuntimeError("Unknown runtime command.")
-            if command is None:
-                yield line
-            else:
-                yield None
-
-    def init_read(self, command):
-        """Read initial commands given by the simulator.
-
-        :param command: (string) command to act accordingly
-        """
-        for line in fileinput.input():
-            line = line.strip()
-            if command == "x":
-                self.position["x"] = float(line)
-            elif command == "y":
-                self.position["y"] = float(line)
-            elif command == "angle":
-                self.position["phi"] = float(line)
-            elif command == "steering_noise":
-                self.noiseTurn = float(line)
-            elif command == "distance_noise":
-                self.noiseMove = float(line)
-            elif command == "forward_steering_drift":
-                self.noiseDrift = float(line)
-            elif command == "speed":
-                self.vMove = float(line)
-            elif command == "turning_speed":
-                self.vTurn = float(line)
-            elif command == "M":
-                u.board.dimensions["x"] = int(line)
-            elif command == "N":
-                u.board.dimensions["y"] = int(line)
-            elif command == "execution_cpu_time_limit":
-                u.timeLimit = float(line)
-            else:
-                raise RuntimeError("Unknown initialization command.")
-            if command is None:
-                yield line
-            else:
-                yield None
+        for move in path:
+            commands = ["TURN " + str(move["turn"]) + "\n", "MOVE " + str(move["move"]) + "\n"]
+            if move["beep"]:
+                commands.append("BEEP\n")
+            for command in commands:
+                yield command
 
 if __name__ == "__main__":
     robot = Robot({"x": 2.5, "y": 2.5, "phi": 0.0})
     board = Board({"x": 9, "y": 9})
     u = Universe(robot, board)
 
-    # Initial read from the simulator
-    command = None  # TODO: Test reading of the simulator commands
+    # Initial read from the simulator # TODO: Test reading of the simulator commands
+    u.init_read()
+
+    path = find_final_path.create_final_path()
+    commands = u.robot.command_generator(path)
+
     while True:
+        # Read from the simulator performed at every step
         try:
-            command = next(u.robot.init_read(command))
+            u.robot.read()
+        except NotImplementedError:
+            break
+
+        try:
+            sys.stdout.write(next(commands))
+            sys.stdout.flush()
         except StopIteration:
             break
 
-    # Read from the simulator performed at every step
-    command = None
-    while True:
-        try:
-            command = next(u.robot.read(command))
-        except StopIteration:
-            raise RuntimeError("Unexpected end of runtime read.")
-        if command == "act":
-            break
+        # moving in straight line turning at walls
+        # if 160 < robot.color[0] < 180:
+        #     sys.stdout.write("TURN 1500\n")
+        #     sys.stdout.flush()
+        # else:
+        #     sys.stdout.write("MOVE 1\n")
+        #     sys.stdout.flush()
+    sys.stdout.write("FINISH")
+    sys.stdout.flush()
