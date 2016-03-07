@@ -1,17 +1,65 @@
 #!/bin/python3
 
+# ---IMPORTS---
+import copy
 import sys
+from math import pi, sin, cos, floor, ceil
 
-import find_final_path
+
+# ---CUSTOM ERRORS---
+class CrashError(Exception):
+    pass
 
 
+class FoundIt(Exception):
+    pass
+
+
+class HaveIt(Exception):
+    pass
+
+
+# ---HELPER CLASSES---
+class BranchNode:
+    def __init__(self, node_position):
+        self.position = node_position.copy()
+        self.moves = []
+        self.cost = 0.0
+        self.objective_group_index = -1
+        self.positions = []
+
+
+class Branch:
+    def __init__(self, position, cost, moves):
+        self.moves = moves.copy()
+        self.movement = {"move": 0.0, "turn": 0.0, "beep": False}
+        self.position = position.copy()
+        self.cost = cost
+        self.objective_group_index = 0
+        self.reverse = False
+        self.positions = []
+
+
+class Path:
+    def __init__(self):
+        self.cost = None
+        self.moves = []
+        self.limits = None
+        self.positions = []
+
+    def __str__(self):
+        return str(self.cost) + ", [" + "; ".join(["{turn: " + str(move["turn"]) + ", move: " + str(move["move"]) +
+                                                   "}" for move in self.moves]) + "]"
+
+
+# ---MAIN PART---
 class Universe:
     """Provide ecosystem for the rest of the program.
 
     Fields:
     :robot: (Robot) robot existing in the Universe
     :board: (Board) board existing in the Universe
-    :timeLimit: (float) time limit for the robot (default: None)
+    :time_limit: (float) time limit for the robot (default: None)
     """
 
     def __init__(self, robot, board):
@@ -22,7 +70,7 @@ class Universe:
         """
         self.robot = robot
         self.board = board
-        self.timeLimit = None
+        self.time_limit = None
 
     def init_read(self):
         """Read initial commands given by the simulator."""
@@ -36,21 +84,21 @@ class Universe:
             elif key == "angle":
                 self.robot.position["phi"] = float(value)
             elif key == "steering_noise":
-                self.robot.noiseTurn = float(value)
+                self.robot.noise_turn = float(value)
             elif key == "distance_noise":
-                self.robot.noiseMove = float(value)
+                self.robot.noise_move = float(value)
             elif key == "forward_steering_drift":
-                self.robot.noiseDrift = float(value)
+                self.robot.noise_drift = float(value)
             elif key == "speed":
-                self.robot.vMove = float(value)
+                self.robot.v_move = float(value)
             elif key == "turning_speed":
-                self.robot.vTurn = float(value)
+                self.robot.v_turn = float(value)
             elif key == "M":
                 self.board.dimensions["x"] = int(value)
             elif key == "N":
                 self.board.dimensions["y"] = int(value)
             elif key == "execution_cpu_time_limit":
-                self.timeLimit = float(value)
+                self.time_limit = float(value)
             else:
                 raise NotImplementedError("Unknown initialization key.")
 
@@ -72,6 +120,36 @@ class Board:
             :"y": (int) y dimension
         """
         self.dimensions = dimensions
+        self.obstacles = None
+        self.objectives = None
+
+    def initialize(self):
+        # ----OBSTACLES----
+        # each obstacle consists of rectangles
+        # each rectangle consists of two ranges: x and y
+        side_left = [  # whole obstacle
+            [  # first rectangle
+                [0.0, 1.1],  # x range
+                [0.0, 9.0]  # y range
+            ]  # possible second rectangle, and so on
+        ]
+        side_right = [
+            [[7.9, 9.0], [0.0, 9.0]]
+        ]
+        side_up = [
+            [[0.0, 9.0], [0.0, 1.1]]
+        ]
+        side_down = [
+            [[0.0, 9.0], [7.9, 9.0]]
+        ]
+        self.obstacles = [side_left, side_right, side_up, side_down]
+
+    def testing(self):
+        # ---OBJECTIVES---
+        obj_red = [[4, 2], [4, 4]]
+        obj_green = [[2, 5], [6, 6]]
+        obj_blue = [[6, 3]]
+        self.objectives = [obj_red, obj_green, obj_blue]
 
 
 class Robot:
@@ -79,13 +157,13 @@ class Robot:
 
     Fields:
     :position: () current position of the robot
-    :vMove: (float) moving speed (default: 0.0)
-    :vTurn: (float) turning speed (default: 0.0)
-    :tickMove: (float) how far does it move in one tick (default: 0.01)
-    :tickTurn: (float) how far does it turn in one tick (default: 0.002)
-    :noiseMove: (float) sigma of the Gaussian noise applied to the distance during moving (default: 0.0)
-    :noiseTurn: (float) sigma of the Gaussian noise applied to the angle during turning (default: 0.0)
-    :noiseDrift: (float) angle added to the position during moving (default: 0.0)
+    :v_move: (float) moving speed (default: 0.0)
+    :v_turn: (float) turning speed (default: 0.0)
+    :tick_move: (float) how far does it move in one tick (default: 0.01)
+    :tick_turn: (float) how far does it turn in one tick (default: 0.002)
+    :noise_move: (float) sigma of the Gaussian noise applied to the distance during moving (default: 0.0)
+    :noise_turn: (float) sigma of the Gaussian noise applied to the angle during turning (default: 0.0)
+    :noise_drift: (float) angle added to the position during moving (default: 0.0)
     :color: (tuple) 3 tuple of ints storing color in RGB format (default: (None, None, None))
     :time: (float) time of the simulation
     """
@@ -96,30 +174,261 @@ class Robot:
         :param position: () -- current position of the robot
         """
         self.position = position
-        self.vMove = 0.2
-        self.vTurn = 1.0
-        self.tickMove = 0.01
-        self.tickTurn = 0.002
-        self.noiseTurn = 0.0
-        self.noiseMove = 0.0
-        self.noiseDrift = 0.0
+        self.v_move = 0.2
+        self.v_turn = 1.0
+        self._tick_move = 0.01
+        self._tick_turn = 0.002
+        self.ticks_distance = 1 / self.tick_move
+        self.ticks_angle = 1 / self.tick_turn
+        self.noise_turn = 4e-6
+        self.noise_move = 1e-5
+        self.noise_drift = 8e-5
         self.color = (None, None, None)
         self.time = 0.0
 
-    def read(self):
+    @property
+    def tick_move(self):
+        return self._tick_move
+
+    @tick_move.setter
+    def tick_move(self, tick_move):
+        self._tick_move = tick_move
+        self.ticks_distance = 1 / self._tick_move
+
+    @property
+    def tick_turn(self):
+        return self._tick_turn
+
+    @tick_turn.setter
+    def tick_turn(self, tick_turn):
+        self._tick_turn = tick_turn
+        self.ticks_angle = 1 / self._tick_turn
+
+    def read(self, watching=True):
         """Read commands given by the simulator."""
         while True:
             key = sys.stdin.readline().strip()
             if key == "act":
                 break
-            elif key == "color":
-                value = sys.stdin.readline().strip()
-                self.color = tuple(map(int, value.split()))
-            elif key == "time":
-                value = sys.stdin.readline().strip()
-                self.time = float(value)
+            elif watching:
+                if key == "color":
+                    value = sys.stdin.readline().strip()
+                    self.color = tuple(map(int, value.split()))
+                elif key == "time":
+                    value = sys.stdin.readline().strip()
+                    self.time = float(value)
+                else:
+                    raise NotImplementedError("Unknown key")
+
+    @staticmethod
+    def convert_objectives(board, offset):
+        objectives_out = []
+        for group in board.objectives:
+            group_out = []
+            for objective in group:
+                objective_out = []
+                for axis in objective:
+                    objective_out.append([axis + offset, axis + 1 - offset])
+                group_out.append(objective_out)
+            objectives_out.append(group_out)
+        board.objectives = objectives_out
+
+    def find_route_correction(self, distance):
+        position_regular = {"x": 0.0, "y": 0.0, "phi": 0.0}
+        position_corrected = {"x": 0.0, "y": 0.0, "phi": 0.0}
+        ticks = int(distance * self.ticks_distance)
+
+        if distance >= 0:  # moving forward
+            position_regular["x"] += distance * cos(position_regular["phi"])
+            position_regular["y"] += distance * sin(-position_regular["phi"])
+            for i in range(ticks):
+                position_corrected["x"] += self.tick_move * cos(position_corrected["phi"])
+                position_corrected["y"] += self.tick_move * sin(-position_corrected["phi"])
+                position_corrected["phi"] += self.noise_drift
+        else:  # moving backwards
+            position_regular["x"] += distance * cos(position_regular["phi"])
+            position_regular["y"] += distance * sin(-position_regular["phi"])
+            for i in range(-ticks):
+                position_corrected["x"] -= self.tick_move * cos(position_corrected["phi"])
+                position_corrected["y"] -= self.tick_move * sin(-position_corrected["phi"])
+                position_corrected["phi"] -= self.noise_drift
+
+        correction = {"x": position_regular["x"] - position_corrected["x"],
+                      "y": position_regular["y"] - position_corrected["y"],
+                      "phi": position_regular["phi"] - position_corrected["phi"]}
+        return correction
+
+    def find_path(self, path_in, movement_in, best_path, node_in, board):
+        best_path.limits = movement_in
+
+        if path_in is None:
+            div_2pi = floor(2 * pi / movement_in["angle"])
+            angles_list = [movement_in["angle"] * div for div in range(div_2pi)]
+            distance_offset = 0.0
+        else:
+            path_moves = path_in.moves[node_in.objective_group_index + 1]
+            div_nr = ceil(path_in.limits["angle"] * 2 / movement_in["angle"])
+            angle_offset = path_moves["turn"] - (movement_in["angle"] * div_nr / 2)
+            angles_list = [angle_offset + (movement_in["angle"] * div) for div in range(div_nr)]
+            if path_moves["move"] >= 0:
+                distance_offset = path_moves["move"] - 2 * path_in.limits["distance"]
             else:
-                raise NotImplementedError("Unknown key")
+                distance_offset = path_moves["move"] + 2 * path_in.limits["distance"]
+
+        move_distance = movement_in["distance"]
+        correction = self.find_route_correction(move_distance)
+        correction_offset = self.find_route_correction(distance_offset)
+
+        branches = []
+        for angle in angles_list:
+            if angle > pi:
+                angle += -2 * pi
+            elif angle < -pi:
+                angle += 2 * pi
+            distance_offset_ticks = int(distance_offset * self.ticks_distance)
+            angle_ticks = int(angle * self.ticks_angle)
+            branch = Branch(node_in.position, node_in.cost, node_in.moves)
+            branch.positions = node_in.positions.copy()
+            branch.objective_group_index = node_in.objective_group_index + 1
+            branch.cost += abs(angle_ticks) / self.v_turn
+            branch.cost += abs(distance_offset_ticks) / self.v_move
+
+            branch.position["phi"] += angle
+            branch.position["x"] += distance_offset * cos(branch.position["phi"]) + correction_offset["x"]
+            branch.position["y"] += distance_offset * sin(-branch.position["phi"]) + correction_offset["y"]
+            branch.position["phi"] += correction_offset["phi"]
+
+            branch.movement["turn"] = angle
+            branch.movement["move"] = distance_offset
+            branches.append(branch)
+
+        reverse_branches = copy.deepcopy(branches)
+        for branch in reverse_branches:
+            branch.reverse = True
+        branches.extend(reverse_branches)
+
+        while True:
+            interesting_branches = []
+            for branch in branches:
+                branch.cost += move_distance * self.ticks_distance / self.v_move
+                if best_path.cost is not None and branch.cost > best_path.cost:
+                    continue
+
+                if branch.reverse:
+                    plusminus = -1
+                else:
+                    plusminus = +1
+                branch.movement["move"] += plusminus * move_distance
+                branch.position["x"] += plusminus * move_distance * cos(branch.position["phi"]) + correction["x"]
+                branch.position["y"] += plusminus * move_distance * sin(-branch.position["phi"]) + correction["y"]
+                branch.position["phi"] += plusminus * correction["phi"]
+
+                try:
+                    for obstacle in board.obstacles:
+                        for rectangle in obstacle:
+                            if rectangle[0][0] < branch.position["x"] < rectangle[0][1] \
+                                    and rectangle[1][0] < branch.position["y"] < rectangle[1][1]:
+                                raise CrashError
+                except CrashError:
+                    continue
+
+                try:
+                    for objective in board.objectives[branch.objective_group_index]:
+                        if objective[0][0] < branch.position["x"] < objective[0][1] \
+                                and objective[1][0] < branch.position["y"] < objective[1][1]:
+                            branch.movement["beep"] = True
+                            branch.moves.append(branch.movement)
+                            branch.positions.append(branch.position)
+                            if branch.objective_group_index < len(board.objectives) - 1:
+                                node = BranchNode(branch.position)
+                                node.moves = branch.moves.copy()
+                                node.positions = branch.positions.copy()
+                                node.cost = branch.cost
+                                node.objective_group_index = branch.objective_group_index
+                                best_path = self.find_path(path_in, movement_in, best_path, node, board)
+                                raise HaveIt
+                            else:
+                                raise FoundIt
+                except FoundIt:
+                    if best_path.cost is None or branch.cost < best_path.cost:
+                        best_path.cost = branch.cost
+                        best_path.moves = branch.moves
+                        best_path.positions = branch.positions
+                    continue
+                except HaveIt:
+                    continue
+
+                interesting_branches.append(branch)
+            if len(interesting_branches) == 0:
+                break
+            branches = interesting_branches
+        return best_path
+
+    @staticmethod
+    def path_to_ticks(path, limits):
+        path_out = []
+        for move_nr, move in enumerate(path.moves):
+            path_out.append({"move": ceil(move["move"] / limits["distance"]),
+                             "turn": ceil(move["turn"] / limits["angle"]),
+                             "position": path.positions[move_nr],
+                             "beep": move["beep"]})
+        return path_out
+
+    def create_final_path(self, board):
+        movement = {"angle": 2*pi/32, "distance": 0.2}  # rough check
+        best_path = self.find_path(
+            path_in=None,
+            movement_in=movement,
+            best_path=Path(),
+            node_in=BranchNode(self.position),
+            board=board)
+
+        movement = {"angle": 2*pi/360, "distance": 0.05}  # refine path
+        best_path = self.find_path(
+            path_in=best_path,
+            movement_in=movement,
+            best_path=Path(),
+            node_in=BranchNode(self.position),
+            board=board)
+
+        movement = {"angle": self.tick_turn, "distance": self.tick_move}  # completely refine path
+        best_path = self.find_path(
+            path_in=best_path,
+            movement_in=movement,
+            best_path=Path(),
+            node_in=BranchNode(self.position),
+            board=board)
+
+        best_path_ticks = self.path_to_ticks(best_path, movement)  # convert path in distance and angle units to ticks
+        return best_path_ticks
+
+    def correct_final_path(self, board):
+        path = self.create_final_path(board)
+        position = path[0]["position"].copy()
+        position["phi"] += path[1]["turn"] * self.tick_turn
+        temp_position = position.copy()
+        counter_ticks = 0
+        while True:
+            position["x"] += self.tick_move * cos(position["phi"])
+            position["y"] += self.tick_move * sin(-position["phi"])
+            position["phi"] += self.noise_drift
+            try:
+                for objective in board.objectives[0]:
+                    if objective[0][0] < position["x"] < objective[0][1] \
+                            and objective[1][0] < position["y"] < objective[1][1]:
+                        counter_ticks += 1
+                        temp_position = position.copy()
+                        raise FoundIt
+                break
+            except FoundIt:
+                pass
+        moves = {"move": counter_ticks, "turn": path[1]["turn"], "position": temp_position, "beep": True}
+        path[0]["beep"] = False
+        path[1]["turn"] = 0
+        path[1]["move"] -= counter_ticks
+        path.insert(1, moves)
+        # print(path)
+        return path
 
     @staticmethod
     def command_generator(path):
@@ -135,36 +444,55 @@ class Robot:
             for command in commands:
                 yield command
 
+
+# ---PROPER EXECUTION PART---
 if __name__ == "__main__":
-    robot = Robot({"x": 2.5, "y": 2.5, "phi": 0.0})
-    board = Board({"x": 9, "y": 9})
-    u = Universe(robot, board)
+    def initialize_world():
+        robot = Robot({"x": 2.5, "y": 2.5, "phi": 0.0})
+        board = Board({"x": 9, "y": 9})
+        universe = Universe(robot, board)
 
-    # Initial read from the simulator # TODO: Test reading of the simulator commands
-    u.init_read()
+        if not local_testing:
+            universe.init_read()  # Initial read from the simulator
+        universe.board.initialize()  # Board initialization
 
-    path = find_final_path.correct_final_path()
-    commands = u.robot.command_generator(path)
+        if testing:
+            universe.board.testing()  # Actions on board for testing purposes  # TODO: clear that
+        return universe
 
-    while True:
-        # Read from the simulator performed at every step
-        try:
-            u.robot.read()
-        except NotImplementedError:
-            break
+    def final_path_commands(universe):
+        universe.robot.convert_objectives(universe.board, offset=0.15)
 
-        try:
-            sys.stdout.write(next(commands))
-            sys.stdout.flush()
-        except StopIteration:
-            break
+        path = universe.robot.correct_final_path(universe.board)
+        commands = universe.robot.command_generator(path)
+        return commands
 
-        # moving in straight line turning at walls
-        # if 160 < robot.color[0] < 180:
-        #     sys.stdout.write("TURN 1500\n")
-        #     sys.stdout.flush()
-        # else:
-        #     sys.stdout.write("MOVE 1\n")
-        #     sys.stdout.flush()
+    def robot_write(universe, commands):
+        while True:
+            # Read from the simulator performed at every step
+            universe.robot.read()
+
+            try:
+                # Write next command
+                sys.stdout.write(next(commands))
+                sys.stdout.flush()
+            except StopIteration:
+                break
+
+    local_testing = False
+    testing = True
+
+    universe = initialize_world()
+    commands = final_path_commands(universe)  # finding final path
+    if not local_testing:
+        robot_write(universe, commands)
+
+    # moving in straight line turning at walls # TODO: move to separate place
+    # if 160 < robot.color[0] < 180:
+    #     sys.stdout.write("TURN 1500\n")
+    #     sys.stdout.flush()
+    # else:
+    #     sys.stdout.write("MOVE 1\n")
+    #     sys.stdout.flush()
     sys.stdout.write("FINISH")
     sys.stdout.flush()
