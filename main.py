@@ -1,4 +1,4 @@
-#!/bin/python3
+#!/bin/env python3
 
 # ---IMPORTS---
 import copy
@@ -151,16 +151,17 @@ class Board:
 
     def testing(self):
         # ---OBJECTIVES---
-        easy = True
+        easy = False
         if easy:
-            obj_red = [[3, 2]]
-            obj_green = [[4, 2]]
-            obj_blue = [[5, 2]]
+            obj_red = [[6, 2]]
+            obj_green = [[4, 4]]
+            obj_blue = [[5, 3]]
+            self.objectives = [obj_red, obj_green]
         else:
             obj_red = [[4, 2], [4, 4]]
             obj_green = [[2, 5], [6, 6]]
             obj_blue = [[6, 3]]
-        self.objectives = [obj_red, obj_green, obj_blue]
+            self.objectives = [obj_red, obj_green, obj_blue]
 
 
 class Robot:
@@ -193,7 +194,8 @@ class Robot:
         self.ticks_angle = 1 / self.tick_turn
         self.noise_turn = 4e-6
         self.noise_move = 1e-5
-        self.noise_drift = 8e-5
+        # self.noise_drift = 8e-5
+        self.noise_drift = 4e-4
         self.color = (None, None, None)
         self.time = 0.0
         self.correction_table = []
@@ -254,9 +256,9 @@ class Robot:
         while iterator < 800:
             temp_position["x"] += self.tick_move * cos(temp_position["phi"])
             temp_position["y"] += self.tick_move * sin(-temp_position["phi"])
-            temp_position["phi"] += self.noise_drift
+            temp_position["phi"] -= self.noise_drift
             l_new = sqrt(temp_position["x"]**2 + temp_position["y"]**2)
-            phi_new = -(atan2(0, 1) - atan2(temp_position["y"] / l_new, temp_position["x"] / l_new))
+            phi_new = atan2(0, 1) - atan2(temp_position["y"] / l_new, temp_position["x"] / l_new)
             self.correction_table.append({"l": l_new, "phi": phi_new})
             self.correction_table_reversed[round(l_new, 3)] = {"l": iterator + 1, "phi": phi_new}
             iterator += 1
@@ -265,29 +267,39 @@ class Robot:
         best_path.limits = movement_in
 
         if path_in is None:
-            div_2pi = floor(2 * pi / movement_in["angle"])
-            angles_list = [my_round(movement_in["angle"] * div, base=self.tick_turn) for div in range(div_2pi)]
-            distance_offset = 0.0
+            ang = 0.0
+            angles_list = [ang]
+            while ang < pi - movement_in["angle"]:
+                ang += my_round(movement_in["angle"], base=self.tick_turn)
+                angles_list.append(ang)
+            ang = 0.0
+            while ang > -pi + movement_in["angle"]:
+                ang -= my_round(movement_in["angle"], base=self.tick_turn)
+                angles_list.append(ang)
+            distance_offset = 0
         else:
             path_moves = path_in.moves[node_in.objective_group_index + 1]
-            div_nr = ceil(path_in.limits["angle"] * 2 / movement_in["angle"])
-            angle_offset = path_moves["turn"] - (movement_in["angle"] * div_nr / 2)
-            angles_list = [my_round(angle_offset + (movement_in["angle"] * div), base=self.tick_turn) for div in range(div_nr)]
-            if path_moves["move"] >= 0:
-                distance_offset = path_moves["move"] - 2 * path_in.limits["distance"]
-            else:
-                distance_offset = path_moves["move"] + 2 * path_in.limits["distance"]
 
-        move_distance = movement_in["distance"]
+            ang = path_moves["turn"]
+            angles_list = [ang]
+            while ang < ang + path_in.limits["angle"] * 2 - movement_in["angle"]:
+                ang += my_round(movement_in["angle"], base=self.tick_turn)
+                angles_list.append(ang)
+            ang = path_moves["turn"]
+            while ang > ang - path_in.limits["angle"] * 2 + movement_in["angle"]:
+                ang -= my_round(movement_in["angle"], base=self.tick_turn)
+                angles_list.append(ang)
+
+            if path_moves["move"] >= 0:
+                distance_offset = my_round(path_moves["move"] - 2 * path_in.limits["distance"], base=self.tick_move)
+            else:
+                distance_offset = my_round(path_moves["move"] + 2 * path_in.limits["distance"], base=self.tick_move)
+
+        move_distance = my_round(movement_in["distance"], base=self.tick_move)
 
         branches = []
         for angle in angles_list:
-            if angle > pi:
-                angle += -2 * pi
-            elif angle < -pi:
-                angle += 2 * pi
-            distance_offset_ticks = int(distance_offset * self.ticks_distance)
-            angle_ticks = int(angle * self.ticks_angle)
+            distance_offset_ticks = round(distance_offset * self.ticks_distance)
 
             offset_correction = self.correction_table[distance_offset_ticks]
 
@@ -300,7 +312,7 @@ class Robot:
             branch.position["phi"] += angle
             branch.position["x"] += offset_correction["l"] * cos(branch.position["phi"] + offset_correction["phi"])
             branch.position["y"] += offset_correction["l"] * sin(-(branch.position["phi"] + offset_correction["phi"]))
-            branch.position["phi"] += distance_offset_ticks * self.noise_drift
+            branch.position["phi"] -= distance_offset_ticks * self.noise_drift
 
             branch.movement["turn"] = angle
             branch.movement["move"] = distance_offset
@@ -314,7 +326,7 @@ class Robot:
         while True:
             interesting_branches = []
             for branch in branches:
-                tick_distance = int(move_distance * self.ticks_distance)
+                tick_distance = round(move_distance * self.ticks_distance)
                 branch.cost += move_distance / self.v_move
                 if best_path.cost is not None and branch.cost > best_path.cost:
                     continue
@@ -327,7 +339,7 @@ class Robot:
                 branch.movement["move"] += pm * move_distance
                 branch.position["x"] += pm * correction["l"] * cos(branch.position["phi"] + correction["phi"])
                 branch.position["y"] += pm * correction["l"] * sin(-(branch.position["phi"] + correction["phi"]))
-                branch.position["phi"] += pm * tick_distance * self.noise_drift
+                branch.position["phi"] -= tick_distance * self.noise_drift
 
                 try:
                     for obstacle in board.obstacles:
@@ -374,42 +386,44 @@ class Robot:
     def path_to_ticks(path, limits):
         path_out = []
         for move_nr, move in enumerate(path.moves):
-            path_out.append({"move": ceil(move["move"] / limits["distance"]),
-                             "turn": ceil(move["turn"] / limits["angle"]),
+            path_out.append({"move": round(move["move"] / limits["distance"]),
+                             "turn": round(move["turn"] / limits["angle"]),
                              "position": path.positions[move_nr],
                              "beep": move["beep"]})
         return path_out
 
     def create_final_path(self, board):
-        movement = {"angle": 2*pi/32, "distance": 0.2}  # rough check
+        movement = {"angle": 2*pi/32, "distance": 0.1}  # rough check
         best_path = self.find_path(
             path_in=None,
             movement_in=movement,
             best_path=Path(),
             node_in=BranchNode(self.position),
             board=board)
-        print(best_path)
+        # print(best_path)
 
-        movement = {"angle": 2*pi/360, "distance": 0.05}  # refine path
-        best_path = self.find_path(
-            path_in=best_path,
-            movement_in=movement,
-            best_path=Path(),
-            node_in=BranchNode(self.position),
-            board=board)
-        print(best_path)
+        # movement = {"angle": 2*pi/360, "distance": 0.05}  # refine path
+        # best_path = self.find_path(
+        #     path_in=best_path,
+        #     movement_in=movement,
+        #     best_path=Path(),
+        #     node_in=BranchNode(self.position),
+        #     board=board)
+        # print(best_path)
+        #
+        # movement = {"angle": self.tick_turn, "distance": self.tick_move}  # completely refine path
+        # best_path = self.find_path(
+        #     path_in=best_path,
+        #     movement_in=movement,
+        #     best_path=Path(),
+        #     node_in=BranchNode(self.position),
+        #     board=board)
+        # print(best_path)
 
-        movement = {"angle": self.tick_turn, "distance": self.tick_move}  # completely refine path
-        best_path = self.find_path(
-            path_in=best_path,
-            movement_in=movement,
-            best_path=Path(),
-            node_in=BranchNode(self.position),
-            board=board)
-        print(best_path)
-
-        best_path_ticks = self.path_to_ticks(best_path, movement)  # convert path in distance and angle units to ticks
-        print(best_path_ticks)
+        best_path_ticks = self.path_to_ticks(best_path, {"angle": self.tick_turn, "distance": self.tick_move})  # convert path in distance and angle units to ticks
+        for p in best_path_ticks:
+            # print(p)
+            pass
         return best_path_ticks
 
     def correct_final_path(self, board):
@@ -491,7 +505,7 @@ if __name__ == "__main__":
             except StopIteration:
                 break
 
-    local_testing = True
+    local_testing = False
     testing = True
 
     universe = initialize_world()
