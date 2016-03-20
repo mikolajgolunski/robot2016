@@ -153,14 +153,14 @@ class Board:
         # ---OBJECTIVES---
         easy = False
         if easy:
-            obj_red = [[6, 2]]
-            obj_green = [[4, 4]]
+            obj_red = [[5, 5]]
+            obj_green = [[3, 4]]
             obj_blue = [[5, 3]]
             self.objectives = [obj_red, obj_green]
         else:
-            obj_red = [[4, 2], [4, 4]]
-            obj_green = [[2, 5], [6, 6]]
-            obj_blue = [[6, 3]]
+            obj_red = [[3, 6], [6, 6]]
+            obj_green = [[2, 2], [3, 4], [5, 4]]
+            obj_blue = [[6, 2], [2, 6]]
             self.objectives = [obj_red, obj_green, obj_blue]
 
 
@@ -282,11 +282,11 @@ class Robot:
 
             ang = path_moves["turn"]
             angles_list = [ang]
-            while ang < ang + path_in.limits["angle"] * 2 - movement_in["angle"]:
+            while ang < path_moves["turn"] + path_in.limits["angle"] * 2 - movement_in["angle"]:
                 ang += my_round(movement_in["angle"], base=self.tick_turn)
                 angles_list.append(ang)
             ang = path_moves["turn"]
-            while ang > ang - path_in.limits["angle"] * 2 + movement_in["angle"]:
+            while ang > path_moves["turn"] - path_in.limits["angle"] * 2 + movement_in["angle"]:
                 ang -= my_round(movement_in["angle"], base=self.tick_turn)
                 angles_list.append(ang)
 
@@ -299,7 +299,7 @@ class Robot:
 
         branches = []
         for angle in angles_list:
-            distance_offset_ticks = round(distance_offset * self.ticks_distance)
+            distance_offset_ticks = round(abs(distance_offset) * self.ticks_distance)
 
             offset_correction = self.correction_table[distance_offset_ticks]
 
@@ -309,9 +309,14 @@ class Robot:
             branch.cost += abs(angle) / self.v_turn
             branch.cost += abs(distance_offset) / self.v_move
 
+            if distance_offset >= 0:
+                pm = +1
+            else:
+                pm = -1
+
             branch.position["phi"] += angle
-            branch.position["x"] += offset_correction["l"] * cos(branch.position["phi"] + offset_correction["phi"])
-            branch.position["y"] += offset_correction["l"] * sin(-(branch.position["phi"] + offset_correction["phi"]))
+            branch.position["x"] += pm * offset_correction["l"] * cos(branch.position["phi"] + offset_correction["phi"])
+            branch.position["y"] += pm * offset_correction["l"] * sin(-(branch.position["phi"] + offset_correction["phi"]))
             branch.position["phi"] -= distance_offset_ticks * self.noise_drift
 
             branch.movement["turn"] = angle
@@ -402,22 +407,22 @@ class Robot:
             board=board)
         # print(best_path)
 
-        # movement = {"angle": 2*pi/360, "distance": 0.05}  # refine path
-        # best_path = self.find_path(
-        #     path_in=best_path,
-        #     movement_in=movement,
-        #     best_path=Path(),
-        #     node_in=BranchNode(self.position),
-        #     board=board)
+        movement = {"angle": 2*pi/360, "distance": 0.05}  # refine path
+        best_path = self.find_path(
+            path_in=best_path,
+            movement_in=movement,
+            best_path=Path(),
+            node_in=BranchNode(self.position),
+            board=board)
         # print(best_path)
-        #
-        # movement = {"angle": self.tick_turn, "distance": self.tick_move}  # completely refine path
-        # best_path = self.find_path(
-        #     path_in=best_path,
-        #     movement_in=movement,
-        #     best_path=Path(),
-        #     node_in=BranchNode(self.position),
-        #     board=board)
+
+        movement = {"angle": self.tick_turn, "distance": self.tick_move}  # completely refine path
+        best_path = self.find_path(
+            path_in=best_path,
+            movement_in=movement,
+            best_path=Path(),
+            node_in=BranchNode(self.position),
+            board=board)
         # print(best_path)
 
         best_path_ticks = self.path_to_ticks(best_path, {"angle": self.tick_turn, "distance": self.tick_move})  # convert path in distance and angle units to ticks
@@ -432,15 +437,19 @@ class Robot:
         position["phi"] += path[1]["turn"] * self.tick_turn
         temp_position = position.copy()
         counter_ticks = 0
+        if path[1]["move"] >= 0:
+            pm = +1
+        else:
+            pm = -1
         while True:
-            position["x"] += self.tick_move * cos(position["phi"])
-            position["y"] += self.tick_move * sin(-position["phi"])
-            position["phi"] += self.noise_drift
+            position["x"] += pm * self.tick_move * cos(position["phi"])
+            position["y"] += pm * self.tick_move * sin(-position["phi"])
+            position["phi"] -= pm * self.noise_drift
             try:
                 for objective in board.objectives[0]:
                     if objective[0][0] < position["x"] < objective[0][1] \
                             and objective[1][0] < position["y"] < objective[1][1]:
-                        counter_ticks += 1
+                        counter_ticks += pm * 1
                         temp_position = position.copy()
                         raise FoundIt
                 break
@@ -451,7 +460,9 @@ class Robot:
         path[1]["turn"] = 0
         path[1]["move"] -= counter_ticks
         path.insert(1, moves)
-        # print(path)
+        for p in path:
+            #print(p)
+            pass
         return path
 
     @staticmethod
@@ -488,8 +499,8 @@ if __name__ == "__main__":
     def final_path_commands(universe):
         universe.robot.convert_objectives(universe.board, offset=0.15)
 
-        path = universe.robot.create_final_path(universe.board)
-        # path = universe.robot.correct_final_path(universe.board)
+        # path = universe.robot.create_final_path(universe.board)
+        path = universe.robot.correct_final_path(universe.board)
         commands = universe.robot.command_generator(path)
         return commands
 
