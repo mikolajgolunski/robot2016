@@ -36,7 +36,7 @@ class BranchNode:
 
 class Branch:
     def __init__(self, position, cost, moves):
-        self.moves = moves.copy()
+        self.moves = copy.copy(moves)
         self.movement = {"move": 0.0, "turn": 0.0, "beep": False}
         self.position = position.copy()
         self.cost = cost
@@ -126,7 +126,7 @@ class Board:
         """
         self.dimensions = dimensions
         self.obstacles = None
-        self.objectives = None
+        self.objectives = [[],[],[]]
 
     def initialize(self):
         # ----OBSTACLES----
@@ -301,12 +301,12 @@ class Robot:
 
         branches = []
         for angle in angles_list:
-            distance_offset_ticks = round(abs(distance_offset) * self.ticks_distance)
+            distance_offset_ticks = int(round(abs(distance_offset) * self.ticks_distance))
 
             offset_correction = self.correction_table[distance_offset_ticks]
 
             branch = Branch(node_in.position, node_in.cost, node_in.moves)
-            branch.positions = node_in.positions.copy()
+            branch.positions = copy.copy(node_in.positions)
             branch.objective_group_index = node_in.objective_group_index + 1
             branch.cost += abs(angle) / self.v_turn
             branch.cost += abs(distance_offset) / self.v_move
@@ -333,7 +333,7 @@ class Robot:
         while True:
             interesting_branches = []
             for branch in branches:
-                tick_distance = round(move_distance * self.ticks_distance)
+                tick_distance = int(round(move_distance * self.ticks_distance))
                 branch.cost += move_distance / self.v_move
                 if best_path.cost is not None and branch.cost > best_path.cost:
                     continue
@@ -366,8 +366,8 @@ class Robot:
                             branch.positions.append(branch.position)
                             if branch.objective_group_index < len(board.objectives) - 1:
                                 node = BranchNode(branch.position)
-                                node.moves = branch.moves.copy()
-                                node.positions = branch.positions.copy()
+                                node.moves = copy.copy(branch.moves)
+                                node.positions = copy.copy(branch.positions)
                                 node.cost = branch.cost
                                 node.objective_group_index = branch.objective_group_index
                                 best_path = self.find_path(path_in, movement_in, best_path, node, board)
@@ -393,8 +393,8 @@ class Robot:
     def path_to_ticks(path, limits):
         path_out = []
         for move_nr, move in enumerate(path.moves):
-            path_out.append({"move": round(move["move"] / limits["distance"]),
-                             "turn": round(move["turn"] / limits["angle"]),
+            path_out.append({"move": int(round(move["move"] / limits["distance"])),
+                             "turn": int(round(move["turn"] / limits["angle"])),
                              "position": path.positions[move_nr],
                              "beep": move["beep"]})
         return path_out
@@ -483,6 +483,95 @@ class Robot:
             for command in commands:
                 yield command
 
+    # makes a movement
+    # x - shift in ticks
+    def move_forward(self, x):
+        # znajdz dist i angle w tabelce Mikiego
+        dist = x
+        angle = 0
+        angle2 = 0
+        # poczekaj na act
+        self.read(watching=False)
+        # obrot o angle
+        sys.stdout.write("TURN " + str(angle) + "\n")
+        sys.stdout.flush()
+        # poczekaj na act
+        self.read(watching=False)
+        # idz dist i obroc sie nazot
+        sys.stdout.write("MOVE " + str(dist) + "\n")
+        sys.stdout.flush()
+        # poczekaj na act
+        self.read(watching=False)
+        # idz dist i obroc sie nazot
+        sys.stdout.write("TURN " + str(angle2) + "\n")
+        sys.stdout.flush()
+
+    # makes a rotation movement
+    # phi - angle in ticks
+    def move_rotate(self, phi):
+        # waiting for "act"
+        self.read(watching=False)
+        # rotate
+        sys.stdout.write("TURN " + str(phi) + "\n")
+        sys.stdout.flush()
+
+    # test the actual color under sensor
+    # x,y - actual robot position (int, as table indexes)
+    def test_field_color(self, x, y, universe):
+
+        # read the color value
+        self.read(watching=True)
+
+        # test the current color
+        r = self.color[0]
+        g = self.color[1]
+        b = self.color[2]
+
+        # print("coooooooooooolor:" + str(r) + "-" + str(g) + "-" + str(b))
+
+        sys.stdout.write("TURN 0 \n")
+        sys.stdout.flush()
+        # send any command
+
+        # if white
+        if g > 210 and r > 200 and b > 200:
+            return "1"
+
+        # if red
+        elif r > 210 and g < 50 and b < 50:
+            # write to table
+            universe.board.objectives[0].append([x, y])
+            # print("reeeeeeed:" + str(r) + "-" + str(g) + "-" + str(b))
+            # print_board(universe.board.objectives)
+            return "r"
+        # if green
+        elif g > 110 and r < 50 and b < 100:
+            # write to table
+            universe.board.objectives[1].append([x, y])
+            # print("greeeeeen" + str(r) + "-" + str(g) + "-" + str(b))
+            # print_board(universe.board.objectives)
+            return "g"
+        # if blue
+        elif b > 100 and r < 80 and g < 100:
+            # write to table
+            universe.board.objectives[2].append([x, y])
+            # print("blueeeee" + str(r) + "-" + str(g) + "-" + str(b))
+            # print_board(universe.board.objectives)
+            return "b"
+        # if wall
+        elif r > 100:
+            return "w"
+        # if black
+        else:
+            return "0"
+
+    def scan_fields(self, x1, y1, x2, y2, scan_angle, universe):
+        self.move_rotate(int(scan_angle/2))
+        self.test_field_color(x1, y1, universe)
+        self.move_rotate(-scan_angle)
+        self.test_field_color(x2, y2, universe)
+        self.move_rotate(int(scan_angle/2))
+
 
 # ---PROPER EXECUTION PART---
 if __name__ == "__main__":
@@ -519,10 +608,93 @@ if __name__ == "__main__":
             except StopIteration:
                 break
 
+    def format_row(row):
+        return '[' + ','.join(str(x) for x in row) + ']'
+
+    def format_colour_table(board):
+        return ''.join(format_row(row) for row in board)
+
+    def print_board(board):
+        b = "TABLICA:["
+        c = "]_[".join(format_colour_table(row) for row in board)
+        b += c + "]KONIEC \n"
+        print(b)
+
+    def find_colours(universe):
+        # scanning angle (ticks)
+        scan_angle = 780
+
+
+        # ##################################################################
+        # KLAUD's CRAZY MOVEMENTS START
+        universe.robot.move_forward(-50)
+        universe.robot.test_field_color(2, 2, universe)
+
+        universe.robot.move_forward(100)
+        universe.robot.test_field_color(3, 2, universe)
+        universe.robot.move_forward(100)
+        universe.robot.test_field_color(4, 2, universe)
+        # print("coooooooooooolor:" + str(universe.robot.color[0]) + "-" + str(universe.robot.color[1]) + "-" + str(universe.robot.color[2]))
+        universe.robot.move_forward(100)
+        universe.robot.test_field_color(5, 2, universe)
+        universe.robot.move_forward(100)
+        universe.robot.test_field_color(6, 2, universe)
+        universe.robot.move_rotate(-785)
+        universe.robot.move_forward(50)
+        universe.robot.scan_fields(6, 3, 5, 3, scan_angle, universe)
+        universe.robot.move_forward(100)
+        universe.robot.move_rotate(int(scan_angle/2))
+        universe.robot.test_field_color(6, 4, universe)
+        universe.robot.move_rotate(-scan_angle)
+        universe.robot.test_field_color(5, 4, universe)
+        universe.robot.move_rotate(int(-(785-scan_angle/2)))
+        universe.robot.move_forward(100)
+        universe.robot.scan_fields(4, 4, 4, 3, scan_angle, universe)
+        universe.robot.move_forward(100)
+        universe.robot.scan_fields(3, 4, 3, 3, scan_angle, universe)
+        universe.robot.move_forward(100)
+        universe.robot.move_rotate(int(-scan_angle/2))
+        universe.robot.test_field_color(2, 3, universe)
+        universe.robot.move_rotate(scan_angle)
+        universe.robot.test_field_color(2, 4, universe)
+        universe.robot.move_rotate(int(785-scan_angle/2))
+        universe.robot.move_forward(100)
+        universe.robot.scan_fields(3, 5, 2, 5, scan_angle, universe)
+        universe.robot.move_forward(100)
+
+        universe.robot.move_rotate(int(-scan_angle/2))
+        universe.robot.test_field_color(2, 6, universe)
+        universe.robot.move_rotate(scan_angle)
+        universe.robot.test_field_color(3, 6, universe)
+        universe.robot.move_rotate(int(785-scan_angle/2))
+
+        universe.robot.move_forward(100)
+        universe.robot.scan_fields(4, 5, 4, 6, scan_angle, universe)
+
+        universe.robot.move_forward(100)
+        universe.robot.scan_fields(5, 5, 5, 6, scan_angle, universe)
+        universe.robot.move_forward(100)
+        universe.robot.scan_fields(6, 5, 6, 6, scan_angle, universe)
+
+        # KLAUD's CRAZY MOVEMENTS END
+        # ##################################################################
+
+
     local_testing = False
-    testing = True
+    testing = False
 
     universe = initialize_world()
+
+    # universe.robot.move_rotate(-500)
+    # universe.robot.move_forward(190)
+    # print("TTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTT:" + universe.robot.test_field_color(3,6, universe) + "||\n")
+    # universe.robot.test_field_color(1,1, universe)
+    # print_board(universe.board.objectives)
+
+    find_colours(universe)
+    # print_board(universe.board.objectives)
+
+    universe.robot.position={"x": 6.0, "y": 6.0, "phi": 0.0}
     commands = final_path_commands(universe)  # finding final path
     if not local_testing:
         robot_write(universe, commands, watching=False)
