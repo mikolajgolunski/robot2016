@@ -126,7 +126,7 @@ class Board:
         """
         self.dimensions = dimensions
         self.obstacles = None
-        self.objectives = [[],[],[]]
+        self.objectives = [[], [], []]
 
     def initialize(self):
         # ----OBSTACLES----
@@ -194,7 +194,7 @@ class Robot:
         self.ticks_angle = 1 / self.tick_turn
         self.noise_turn = 4e-6
         self.noise_move = 1e-5
-        self.noise_drift = 4e-4
+        self.noise_drift = 3e-3
         self.color = (None, None, None)
         self.time = 0.0
         self.correction_table = []
@@ -487,15 +487,22 @@ class Robot:
 
     # makes a movement
     # x - shift in ticks
-    def move_forward(self, x):
-        # znajdz dist i angle w tabelce Mikiego
-        dist = x
-        angle = 0
-        angle2 = 0
+    def move_forward(self, l, start_angle, ticks):
+        # znajdz dist i angle w tabelce Mikiego - nieaktualne, do funkcji podajemy juz przeliczona wartosc
+        dist = ticks
+
+        if dist >= 0:
+            angle2 = dist * (self.noise_drift/self._tick_turn) - start_angle
+        else:
+            angle2 = -dist * (self.noise_drift/self._tick_turn) + start_angle
+            # print("angle2:" + str(angle2) + "dist:" + str(dist) + "start_angle:" + str(start_angle))
+
+        angle2 = int(angle2)
+
         # poczekaj na act
         self.read(watching=False)
         # obrot o angle
-        sys.stdout.write("TURN " + str(angle) + "\n")
+        sys.stdout.write("TURN " + str(start_angle) + "\n")
         sys.stdout.flush()
         # poczekaj na act
         self.read(watching=False)
@@ -508,6 +515,10 @@ class Robot:
         sys.stdout.write("TURN " + str(angle2) + "\n")
         sys.stdout.flush()
 
+        # refresh robot position
+        self.position["x"] += l * cos(self.position["phi"])
+        self.position["y"] += l * sin(-self.position["phi"])
+
     # makes a rotation movement
     # phi - angle in ticks
     def move_rotate(self, phi):
@@ -516,6 +527,9 @@ class Robot:
         # rotate
         sys.stdout.write("TURN " + str(phi) + "\n")
         sys.stdout.flush()
+
+        # refreash robot position
+        self.position["phi"] += phi * self._tick_turn
 
     # test the actual color under sensor
     # x,y - actual robot position (int, as table indexes)
@@ -624,60 +638,92 @@ if __name__ == "__main__":
 
     def find_colours(universe):
         # scanning angle (ticks)
-        scan_angle = 780
+        scan_angle = 1280
 
+        # initialize tick values for required movements
+        mov = {}
+        mov[100] = {"l": 100, "phi": 0, "ticks": 666}
+        mov[50] = {"l": 50,  "phi": 0, "ticks": 666}
+
+        # saerch for tick values for required movements
+        diff100 = 99999
+        diff50 = 99999
+
+        for (i, item) in enumerate(universe.robot.correction_table):
+            if i < 150:
+                # for 50
+                d = abs(0.5 - item["l"])
+                if d < diff50:
+                    diff50 = d
+                    mov[50] = {"l": item["l"],  "phi": int(item["phi"] / universe.robot.tick_turn), "ticks": i}
+                # for 100
+                d = abs(1.0 - item["l"])
+                if d < diff100:
+                    diff100 = d
+                    mov[100] = {"l": item["l"],  "phi": int(item["phi"] / universe.robot.tick_turn), "ticks": i}
+
+        mov[50]["phi"] = mov[100]["phi"]
+
+            # t +=  str(i)+":" + str(item["l"])+":"+str(item["phi"])+"|"
+
+        # t = "100=l:"+ str( mov[100]["l"]) + ",phi:" + str(mov[100]["phi"]) + ",ticks:" + str(mov[100]["ticks"]) + "|"
+        # t += "50=l:"+ str(mov[50]["l"]) + ",phi:" + str(mov[50]["phi"]) + ",ticks:" + str(mov[50]["ticks"]) + "|"
+
+        # print(t)
 
         # ##################################################################
         # KLAUD's CRAZY MOVEMENTS START
-        universe.robot.move_forward(-50)
-        universe.robot.test_field_color(2, 2, universe)
+        # universe.robot.move_rotate(-1570)
+        universe.robot.move_forward(-mov[50]["l"], -mov[50]["phi"], -mov[50]["ticks"])
+        # universe.robot.move_forward(mov[50]["l"], mov[50]["phi"], mov[50]["ticks"])
+        # universe.robot.move_rotate(1570)
 
-        universe.robot.move_forward(100)
+        # universe.robot.move_forward(-mov[100]["l"], -mov[100]["phi"], -mov[100]["ticks"])
+        # universe.robot.move_forward(mov[50]["l"], mov[50]["phi"], mov[50]["ticks"])
+        # universe.robot.move_forward(-mov[50]["l"], -mov[50]["phi"], -mov[50]["ticks"])
+        universe.robot.test_field_color(2, 2, universe)
+        universe.robot.move_forward(mov[100]["l"], mov[100]["phi"], mov[100]["ticks"])
         universe.robot.test_field_color(3, 2, universe)
-        universe.robot.move_forward(100)
+        universe.robot.move_forward(mov[100]["l"], mov[100]["phi"], mov[100]["ticks"])
         universe.robot.test_field_color(4, 2, universe)
-        # print("coooooooooooolor:" + str(universe.robot.color[0]) + "-" + str(universe.robot.color[1]) + "-" + str(universe.robot.color[2]))
-        universe.robot.move_forward(100)
+        universe.robot.move_forward(mov[100]["l"], mov[100]["phi"], mov[100]["ticks"])
         universe.robot.test_field_color(5, 2, universe)
-        universe.robot.move_forward(100)
+        universe.robot.move_forward(mov[100]["l"], mov[100]["phi"], mov[100]["ticks"])
         universe.robot.test_field_color(6, 2, universe)
         universe.robot.move_rotate(-785)
-        universe.robot.move_forward(50)
+        universe.robot.move_forward(mov[50]["l"], mov[50]["phi"], mov[50]["ticks"])
         universe.robot.scan_fields(6, 3, 5, 3, scan_angle, universe)
-        universe.robot.move_forward(100)
+        universe.robot.move_forward(mov[100]["l"], mov[100]["phi"], mov[100]["ticks"])
         universe.robot.move_rotate(int(scan_angle/2))
         universe.robot.test_field_color(6, 4, universe)
         universe.robot.move_rotate(-scan_angle)
         universe.robot.test_field_color(5, 4, universe)
         universe.robot.move_rotate(int(-(785-scan_angle/2)))
-        universe.robot.move_forward(100)
+        universe.robot.move_forward(mov[100]["l"], mov[100]["phi"], mov[100]["ticks"])
         universe.robot.scan_fields(4, 4, 4, 3, scan_angle, universe)
-        universe.robot.move_forward(100)
+        universe.robot.move_forward(mov[100]["l"], mov[100]["phi"], mov[100]["ticks"])
         universe.robot.scan_fields(3, 4, 3, 3, scan_angle, universe)
-        universe.robot.move_forward(100)
+        universe.robot.move_forward(mov[100]["l"], mov[100]["phi"], mov[100]["ticks"])
+        # print(str(universe.robot.position["x"]) + str(universe.robot.position["y"]))
         universe.robot.move_rotate(int(-scan_angle/2))
         universe.robot.test_field_color(2, 3, universe)
         universe.robot.move_rotate(scan_angle)
         universe.robot.test_field_color(2, 4, universe)
         universe.robot.move_rotate(int(785-scan_angle/2))
-        universe.robot.move_forward(100)
+        universe.robot.move_forward(mov[100]["l"], mov[100]["phi"], mov[100]["ticks"])
         universe.robot.scan_fields(3, 5, 2, 5, scan_angle, universe)
-        universe.robot.move_forward(100)
-
+        universe.robot.move_forward(mov[100]["l"], mov[100]["phi"], mov[100]["ticks"])
         universe.robot.move_rotate(int(-scan_angle/2))
         universe.robot.test_field_color(2, 6, universe)
         universe.robot.move_rotate(scan_angle)
         universe.robot.test_field_color(3, 6, universe)
         universe.robot.move_rotate(int(785-scan_angle/2))
-
-        universe.robot.move_forward(100)
+        universe.robot.move_forward(mov[100]["l"], mov[100]["phi"], mov[100]["ticks"])
         universe.robot.scan_fields(4, 5, 4, 6, scan_angle, universe)
-
-        universe.robot.move_forward(100)
+        universe.robot.move_forward(mov[100]["l"], mov[100]["phi"], mov[100]["ticks"])
         universe.robot.scan_fields(5, 5, 5, 6, scan_angle, universe)
-        universe.robot.move_forward(100)
+        universe.robot.move_forward(mov[100]["l"], mov[100]["phi"], mov[100]["ticks"])
         universe.robot.scan_fields(6, 5, 6, 6, scan_angle, universe)
-
         # KLAUD's CRAZY MOVEMENTS END
         # ##################################################################
 
@@ -696,7 +742,12 @@ if __name__ == "__main__":
     find_colours(universe)
     # print_board(universe.board.objectives)
 
-    universe.robot.position={"x": 6.0, "y": 6.0, "phi": 0.0}
+    # pos = "position:x" + str(universe.robot.position["x"]) + ",y" + str(universe.robot.position["y"] )+ ",phi" + str(universe.robot.position["phi"]) + "|"
+    # print(pos)
+
+    sys.stdout.write("BEEP\n")
+    sys.stdout.flush()
+
     commands = final_path_commands(universe)  # finding final path
     if not local_testing:
         robot_write(universe, commands, watching=False)
