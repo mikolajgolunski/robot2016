@@ -308,8 +308,9 @@ class Robot:
             branch = Branch(node_in.position, node_in.cost, node_in.moves)
             branch.positions = copy.copy(node_in.positions)
             branch.objective_group_index = node_in.objective_group_index + 1
-            branch.cost += abs(angle) / self.v_turn
-            branch.cost += abs(distance_offset) / self.v_move
+            if branch.objective_group_index > 1:
+                branch.cost += abs(angle) / self.v_turn
+                branch.cost += abs(distance_offset) / self.v_move
 
             if distance_offset >= 0:
                 pm = +1
@@ -334,7 +335,8 @@ class Robot:
             interesting_branches = []
             for branch in branches:
                 tick_distance = int(round(move_distance * self.ticks_distance))
-                branch.cost += move_distance / self.v_move
+                if branch.objective_group_index > 1:
+                    branch.cost += move_distance / self.v_move
                 if best_path.cost is not None and branch.cost > best_path.cost:
                     continue
 
