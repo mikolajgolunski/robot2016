@@ -194,7 +194,7 @@ class Robot:
         self.ticks_angle = 1 / self.tick_turn
         self.noise_turn = 4e-6
         self.noise_move = 1e-5
-        self.noise_drift = 3e-3
+        self.noise_drift = 0
         self.color = (None, None, None)
         self.time = 0.0
         self.correction_table = []
@@ -310,6 +310,7 @@ class Robot:
             branch.objective_group_index = node_in.objective_group_index + 1
             if branch.objective_group_index > 1:
                 branch.cost += abs(angle) / self.v_turn
+            if branch.objective_group_index > 0:
                 branch.cost += abs(distance_offset) / self.v_move
 
             if distance_offset >= 0:
@@ -335,8 +336,8 @@ class Robot:
             interesting_branches = []
             for branch in branches:
                 tick_distance = int(round(move_distance * self.ticks_distance))
-                if branch.objective_group_index > 1:
-                    branch.cost += move_distance / self.v_move
+                if branch.objective_group_index > 0:
+                    branch.cost += abs(move_distance) / self.v_move
                 if best_path.cost is not None and branch.cost > best_path.cost:
                     continue
 
@@ -402,7 +403,7 @@ class Robot:
         return path_out
 
     def create_final_path(self, board):
-        movement = {"angle": 2*pi/32, "distance": 0.1}  # rough check
+        movement = {"angle": 2*pi/120, "distance": 0.1}  # rough check
         best_path = self.find_path(
             path_in=None,
             movement_in=movement,
@@ -438,34 +439,34 @@ class Robot:
 
     def correct_final_path(self, board):
         path = self.create_final_path(board)
-        if len(path) > 1:
-            position = path[0]["position"].copy()
-            position["phi"] += path[1]["turn"] * self.tick_turn
-            temp_position = position.copy()
-            counter_ticks = 0
-            if path[1]["move"] >= 0:
-                pm = +1
-            else:
-                pm = -1
-            while True:
-                position["x"] += pm * self.tick_move * cos(position["phi"])
-                position["y"] += pm * self.tick_move * sin(-position["phi"])
-                position["phi"] -= pm * self.noise_drift
-                try:
-                    for objective in board.objectives[0]:
-                        if objective[0][0] < position["x"] < objective[0][1] \
-                                and objective[1][0] < position["y"] < objective[1][1]:
-                            counter_ticks += pm * 1
-                            temp_position = position.copy()
-                            raise FoundIt
-                    break
-                except FoundIt:
-                    pass
-            moves = {"move": counter_ticks, "turn": path[1]["turn"], "position": temp_position, "beep": True}
-            path[0]["beep"] = False
-            path[1]["turn"] = 0
-            path[1]["move"] -= counter_ticks
-            path.insert(1, moves)
+        # if len(path) > 1:
+        #     position = path[0]["position"].copy()
+        #     position["phi"] += path[1]["turn"] * self.tick_turn
+        #     temp_position = position.copy()
+        #     counter_ticks = 0
+        #     if path[1]["move"] >= 0:
+        #         pm = +1
+        #     else:
+        #         pm = -1
+        #     while True:
+        #         position["x"] += pm * self.tick_move * cos(position["phi"])
+        #         position["y"] += pm * self.tick_move * sin(-position["phi"])
+        #         position["phi"] -= pm * self.noise_drift
+        #         try:
+        #             for objective in board.objectives[0]:
+        #                 if objective[0][0] < position["x"] < objective[0][1] \
+        #                         and objective[1][0] < position["y"] < objective[1][1]:
+        #                     counter_ticks += pm * 1
+        #                     temp_position = position.copy()
+        #                     raise FoundIt
+        #             break
+        #         except FoundIt:
+        #             pass
+        moves = {"move": 0, "turn": path[1]["turn"], "position": path[1]["position"], "beep": True}
+        moves["position"]["phi"] += path[1]["turn"] * self.tick_turn
+        path[0]["beep"] = False
+        path[1]["turn"] = 0
+        path.insert(1, moves)
         # for p in path:
         #     print(p)
         #     pass
@@ -606,8 +607,9 @@ if __name__ == "__main__":
         return universe
 
     def final_path_commands(universe):
-        universe.robot.convert_objectives(universe.board, offset=0.25)
+        universe.robot.convert_objectives(universe.board, offset=0.15)
 
+        # path = universe.robot.create_final_path(universe.board)
         path = universe.robot.correct_final_path(universe.board)
         commands = universe.robot.command_generator(path)
         return commands
@@ -745,8 +747,11 @@ if __name__ == "__main__":
     # pos = "position:x" + str(universe.robot.position["x"]) + ",y" + str(universe.robot.position["y"] )+ ",phi" + str(universe.robot.position["phi"]) + "|"
     # print(pos)
 
-    sys.stdout.write("BEEP\n")
-    sys.stdout.flush()
+    # universe.robot.position["x"] = 6
+    # universe.robot.position["y"] = 6
+
+    # sys.stdout.write("BEEP\n")
+    # sys.stdout.flush()
 
     commands = final_path_commands(universe)  # finding final path
     if not local_testing:
