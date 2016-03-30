@@ -4,6 +4,7 @@
 import copy
 import sys
 from math import pi, sin, cos, sqrt, atan2
+# import MGTiming
 
 
 # ---CUSTOM ERRORS---
@@ -24,6 +25,51 @@ def my_round(x, base=1.0):
     return base * round(x / base)
 
 
+def my_copy(obj, use_deepcopy=False):
+    dignore = {str: None, int: None, type(None): None}
+
+    t = type(obj)
+
+    if t in (list, tuple):
+        if t == tuple:
+            # Convert to a list if a tuple to
+            # allow assigning to when copying
+            is_tuple = True
+            obj = list(obj)
+        else:
+            # Otherwise just do a quick slice copy
+            obj = obj[:]
+            is_tuple = False
+
+        # Copy each item recursively
+        for x in range(len(obj)):
+            if type(obj[x]) in dignore:
+                continue
+            obj[x] = my_copy(obj[x], use_deepcopy)
+
+        if is_tuple:
+            # Convert back into a tuple again
+            obj = tuple(obj)
+
+    elif t == dict:
+        # Use the fast shallow dict copy() method and copy any
+        # values which aren't immutable (like lists, dicts etc)
+        obj = obj.copy()
+        for k in obj:
+            if type(obj[k]) in dignore:
+                continue
+            obj[k] = my_copy(obj[k], use_deepcopy)
+
+    elif t in dignore:
+        # Numeric or string/unicode?
+        # It's immutable, so ignore it!
+        pass
+
+    elif use_deepcopy:
+        obj = copy.deepcopy(obj)
+    return obj
+
+
 # ---HELPER CLASSES---
 class BranchNode:
     def __init__(self, node_position):
@@ -36,13 +82,21 @@ class BranchNode:
 
 class Branch:
     def __init__(self, position, cost, moves):
-        self.moves = copy.copy(moves)
+        self.moves = my_copy(moves)
         self.movement = {"move": 0.0, "turn": 0.0, "beep": False}
         self.position = position.copy()
         self.cost = cost
         self.objective_group_index = 0
         self.reverse = False
         self.positions = []
+
+    def copy(self):
+        new = Branch(self.position, self.cost, self.moves)
+        new.movement = self.movement.copy()
+        new.objective_group_index = self.objective_group_index
+        new.reverse = self.reverse
+        new.positions = my_copy(self.positions)
+        return new
 
 
 class Path:
@@ -153,10 +207,10 @@ class Board:
         # ---OBJECTIVES---
         easy = False
         if easy:
-            obj_red = [[6, 2]]
-            obj_green = [[3, 4]]
+            obj_red = [[3, 2], [4, 2]]
+            obj_green = [[5, 2]]
             obj_blue = [[5, 3]]
-            self.objectives = [obj_red]
+            self.objectives = [obj_red, obj_green]
         else:
             obj_red = [[3, 6], [6, 6]]
             obj_green = [[2, 2], [3, 4], [5, 4]]
@@ -194,7 +248,7 @@ class Robot:
         self.ticks_angle = 1 / self.tick_turn
         self.noise_turn = 4e-6
         self.noise_move = 1e-5
-        self.noise_drift = 0
+        self.noise_drift = 2e-3
         self.color = (None, None, None)
         self.time = 0.0
         self.correction_table = []
@@ -271,11 +325,11 @@ class Robot:
         if path_in is None:
             ang = 0.0
             angles_list = [ang]
-            while ang < pi - movement_in["angle"]:
+            while ang < pi / 2 - movement_in["angle"]:
                 ang += my_round(movement_in["angle"], base=self.tick_turn)
                 angles_list.append(ang)
             ang = 0.0
-            while ang > -pi + movement_in["angle"]:
+            while ang > -pi / 2 + movement_in["angle"]:
                 ang -= my_round(movement_in["angle"], base=self.tick_turn)
                 angles_list.append(ang)
             distance_offset = 0
@@ -308,6 +362,10 @@ class Robot:
             branch = Branch(node_in.position, node_in.cost, node_in.moves)
             branch.positions = copy.copy(node_in.positions)
             branch.objective_group_index = node_in.objective_group_index + 1
+
+            if distance_offset < 0:
+                branch.reverse = True
+
             if branch.objective_group_index > 1:
                 branch.cost += abs(angle) / self.v_turn
             if branch.objective_group_index > 0:
@@ -327,10 +385,45 @@ class Robot:
             branch.movement["move"] = distance_offset
             branches.append(branch)
 
-        reverse_branches = copy.deepcopy(branches)
-        for branch in reverse_branches:
-            branch.reverse = True
-        branches.extend(reverse_branches)
+        if path_in is None:
+            for angle in angles_list:
+                distance_offset_ticks = int(round(abs(distance_offset) * self.ticks_distance))
+
+                offset_correction = self.correction_table[distance_offset_ticks]
+
+                branch = Branch(node_in.position, node_in.cost, node_in.moves)
+                branch.positions = copy.copy(node_in.positions)
+                branch.objective_group_index = node_in.objective_group_index + 1
+                branch.reverse = True
+
+                if branch.objective_group_index > 1:
+                    branch.cost += abs(angle) / self.v_turn
+                if branch.objective_group_index > 0:
+                    branch.cost += abs(distance_offset) / self.v_move
+
+                if distance_offset >= 0:
+                    pm = +1
+                else:
+                    pm = -1
+
+                branch.position["phi"] += angle
+                branch.position["x"] += pm * offset_correction["l"] * cos(branch.position["phi"] + offset_correction["phi"])
+                branch.position["y"] += pm * offset_correction["l"] * sin(
+                    -(branch.position["phi"] + offset_correction["phi"]))
+                branch.position["phi"] -= distance_offset_ticks * self.noise_drift
+
+                branch.movement["turn"] = angle
+                branch.movement["move"] = distance_offset
+                branches.append(branch)
+
+        # for branch in branches[:]:
+        #     new_branch = branch.copy()
+        #     new_branch.reverse = True
+        #     branches.append(new_branch)
+        # reverse_branches = my_copy(branches, True)
+        # for branch in reverse_branches:
+        #     branch.reverse = False
+        # branches.extend(reverse_branches)
 
         while True:
             interesting_branches = []
@@ -361,6 +454,12 @@ class Robot:
                     continue
 
                 try:
+                    if path_in is not None and path_moves["move"] >= 0 and branch.movement["move"] > \
+                            my_round(path_moves["move"] + path_in.limits["distance"], base=self.tick_move):
+                        continue
+                    elif path_in is not None and path_moves["move"] < 0 and branch.movement["move"] < \
+                            my_round(path_moves["move"] - path_in.limits["distance"], base=self.tick_move):
+                        continue
                     for objective in board.objectives[branch.objective_group_index]:
                         if objective[0][0] < branch.position["x"] < objective[0][1] \
                                 and objective[1][0] < branch.position["y"] < objective[1][1]:
@@ -368,13 +467,19 @@ class Robot:
                             branch.moves.append(branch.movement)
                             branch.positions.append(branch.position)
                             if branch.objective_group_index < len(board.objectives) - 1:
-                                node = BranchNode(branch.position)
-                                node.moves = copy.copy(branch.moves)
+                                node = BranchNode(copy.copy(branch.position))
+                                node.moves = my_copy(branch.moves)
                                 node.positions = copy.copy(branch.positions)
                                 node.cost = branch.cost
                                 node.objective_group_index = branch.objective_group_index
                                 best_path = self.find_path(path_in, movement_in, best_path, node, board)
-                                raise HaveIt
+
+                                branch.moves_temp = branch.moves[:-1]
+                                branch.moves = branch.moves_temp[:]
+                                branch.positions_temp = branch.positions[:-1]
+                                branch.positions = branch.positions_temp[:]
+
+                                # raise HaveIt
                             else:
                                 raise FoundIt
                 except FoundIt:
@@ -403,7 +508,7 @@ class Robot:
         return path_out
 
     def create_final_path(self, board):
-        movement = {"angle": 2*pi/120, "distance": 0.1}  # rough check
+        movement = {"angle": 2*pi/75, "distance": 0.1}  # rough check
         best_path = self.find_path(
             path_in=None,
             movement_in=movement,
@@ -412,7 +517,7 @@ class Robot:
             board=board)
         # print(best_path)
 
-        movement = {"angle": 2*pi/360, "distance": 0.05}  # refine path
+        movement = {"angle": 2*pi/360, "distance": 0.02}  # refine path
         best_path = self.find_path(
             path_in=best_path,
             movement_in=movement,
@@ -467,6 +572,7 @@ class Robot:
         path[0]["beep"] = False
         path[1]["turn"] = 0
         path.insert(1, moves)
+        # print("---CORRECTION---")
         # for p in path:
         #     print(p)
         #     pass
@@ -493,9 +599,9 @@ class Robot:
         dist = ticks
 
         if dist >= 0:
-            angle2 = dist * (self.noise_drift/self._tick_turn) - start_angle
+            angle2 = dist * (self.noise_drift/self.tick_turn) - start_angle
         else:
-            angle2 = -dist * (self.noise_drift/self._tick_turn) + start_angle
+            angle2 = -dist * (self.noise_drift/self.tick_turn) - start_angle
             # print("angle2:" + str(angle2) + "dist:" + str(dist) + "start_angle:" + str(start_angle))
 
         angle2 = int(angle2)
@@ -530,7 +636,7 @@ class Robot:
         sys.stdout.flush()
 
         # refreash robot position
-        self.position["phi"] += phi * self._tick_turn
+        self.position["phi"] += phi * self.tick_turn
 
     # test the actual color under sensor
     # x,y - actual robot position (int, as table indexes)
@@ -657,14 +763,14 @@ if __name__ == "__main__":
                 d = abs(0.5 - item["l"])
                 if d < diff50:
                     diff50 = d
-                    mov[50] = {"l": item["l"],  "phi": int(item["phi"] / universe.robot.tick_turn), "ticks": i}
+                    mov[50] = {"l": item["l"],  "phi": int(-item["phi"] / universe.robot.tick_turn), "ticks": i}
                 # for 100
                 d = abs(1.0 - item["l"])
                 if d < diff100:
                     diff100 = d
-                    mov[100] = {"l": item["l"],  "phi": int(item["phi"] / universe.robot.tick_turn), "ticks": i}
+                    mov[100] = {"l": item["l"],  "phi": int(-item["phi"] / universe.robot.tick_turn), "ticks": i}
 
-        mov[50]["phi"] = mov[100]["phi"]
+        # mov[50]["phi"] = mov[100]["phi"]
 
             # t +=  str(i)+":" + str(item["l"])+":"+str(item["phi"])+"|"
 
@@ -676,7 +782,7 @@ if __name__ == "__main__":
         # ##################################################################
         # KLAUD's CRAZY MOVEMENTS START
         # universe.robot.move_rotate(-1570)
-        universe.robot.move_forward(-mov[50]["l"], -mov[50]["phi"], -mov[50]["ticks"])
+        universe.robot.move_forward(-mov[50]["l"], mov[50]["phi"], -mov[50]["ticks"])
         # universe.robot.move_forward(mov[50]["l"], mov[50]["phi"], mov[50]["ticks"])
         # universe.robot.move_rotate(1570)
 
@@ -742,16 +848,22 @@ if __name__ == "__main__":
     # print_board(universe.board.objectives)
 
     find_colours(universe)
+    # sys.stdout.write("BEEP\n")
+    # sys.stdout.flush()
+    # print(str(universe.robot.position["x"]) + "," + str(universe.robot.position["y"]))
     # print_board(universe.board.objectives)
 
     # pos = "position:x" + str(universe.robot.position["x"]) + ",y" + str(universe.robot.position["y"] )+ ",phi" + str(universe.robot.position["phi"]) + "|"
     # print(pos)
 
-    # universe.robot.position["x"] = 6
-    # universe.robot.position["y"] = 6
+    # universe.robot.position["x"] = 2.5
+    # universe.robot.position["y"] = 2.5
 
     # sys.stdout.write("BEEP\n")
     # sys.stdout.flush()
+
+    # import cProfile
+    # cProfile.run('final_path_commands(universe)', sort=1)
 
     commands = final_path_commands(universe)  # finding final path
     if not local_testing:
