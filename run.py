@@ -713,7 +713,7 @@ if __name__ == "__main__":
         return universe
 
     def final_path_commands(universe):
-        universe.robot.convert_objectives(universe.board, offset=0.15)
+        universe.robot.convert_objectives(universe.board, offset=0.1)
 
         # path = universe.robot.create_final_path(universe.board)
         path = universe.robot.correct_final_path(universe.board)
